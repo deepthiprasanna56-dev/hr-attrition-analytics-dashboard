@@ -1,0 +1,137 @@
+﻿"use client"
+
+import { useCallback, useEffect, useRef } from "react"
+import type { PointerEvent as ReactPointerEvent } from "react"
+import createGlobe from "cobe"
+
+interface PulseMarker {
+  id: string
+  location: [number, number]
+  delay: number
+}
+
+interface GlobePulseProps {
+  markers?: PulseMarker[]
+  className?: string
+  speed?: number
+}
+
+const defaultMarkers: PulseMarker[] = [
+  { id: "pulse-1", location: [51.51, -0.13], delay: 0 },
+  { id: "pulse-2", location: [40.71, -74.01], delay: 0.5 },
+  { id: "pulse-3", location: [35.68, 139.65], delay: 1 },
+  { id: "pulse-4", location: [-33.87, 151.21], delay: 1.5 },
+]
+
+export function GlobePulse({ markers = defaultMarkers, className = "", speed = 0.003 }: GlobePulseProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const pointerInteracting = useRef<{ x: number; y: number } | null>(null)
+  const dragOffset = useRef({ phi: 0, theta: 0 })
+  const phiOffsetRef = useRef(0)
+  const thetaOffsetRef = useRef(0)
+  const isPausedRef = useRef(false)
+
+  const handlePointerDown = useCallback((event: ReactPointerEvent) => {
+    pointerInteracting.current = { x: event.clientX, y: event.clientY }
+    if (canvasRef.current) canvasRef.current.style.cursor = "grabbing"
+    isPausedRef.current = true
+  }, [])
+
+  const handlePointerUp = useCallback(() => {
+    if (pointerInteracting.current !== null) {
+      phiOffsetRef.current += dragOffset.current.phi
+      thetaOffsetRef.current += dragOffset.current.theta
+      dragOffset.current = { phi: 0, theta: 0 }
+    }
+    pointerInteracting.current = null
+    if (canvasRef.current) canvasRef.current.style.cursor = "grab"
+    isPausedRef.current = false
+  }, [])
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      if (pointerInteracting.current !== null) {
+        dragOffset.current = {
+          phi: (event.clientX - pointerInteracting.current.x) / 300,
+          theta: (event.clientY - pointerInteracting.current.y) / 1000,
+        }
+      }
+    }
+    window.addEventListener("pointermove", handlePointerMove, { passive: true })
+    window.addEventListener("pointerup", handlePointerUp, { passive: true })
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", handlePointerUp)
+    }
+  }, [handlePointerUp])
+
+  useEffect(() => {
+    if (!canvasRef.current) return
+    const canvas = canvasRef.current
+    let globe: ReturnType<typeof createGlobe> | null = null
+    let animationId: number
+    let phi = 0
+
+    function init() {
+      const width = canvas.offsetWidth
+      if (width === 0 || globe) return
+      globe = createGlobe(canvas, {
+        devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+        width,
+        height: width,
+        phi: 0,
+        theta: 0.2,
+        dark: 1,
+        diffuse: 1.5,
+        mapSamples: 16000,
+        mapBrightness: 10,
+        baseColor: [0.5, 0.5, 0.5],
+        markerColor: [0.2, 0.8, 0.9],
+        glowColor: [0.05, 0.05, 0.05],
+        markerElevation: 0,
+        markers: markers.map((marker) => ({ location: marker.location, size: 0.025, id: marker.id })),
+        arcs: [],
+        arcColor: [0.3, 0.85, 0.95],
+        arcWidth: 0.5,
+        arcHeight: 0.25,
+        opacity: 0.7,
+      })
+      function animate() {
+        if (!isPausedRef.current) phi += speed
+        globe?.update({ phi: phi + phiOffsetRef.current + dragOffset.current.phi, theta: 0.2 + thetaOffsetRef.current + dragOffset.current.theta })
+        animationId = requestAnimationFrame(animate)
+      }
+      animate()
+      window.setTimeout(() => { canvas.style.opacity = "1" }, 0)
+    }
+
+    if (canvas.offsetWidth > 0) init()
+    else {
+      const resizeObserver = new ResizeObserver((entries) => {
+        if (entries[0]?.contentRect.width > 0) {
+          resizeObserver.disconnect()
+          init()
+        }
+      })
+      resizeObserver.observe(canvas)
+    }
+    return () => {
+      if (animationId) cancelAnimationFrame(animationId)
+      globe?.destroy()
+    }
+  }, [markers, speed])
+
+  return (
+    <div className={`relative aspect-square select-none ${className}`}>
+      <style>{`@keyframes pulse-expand { 0% { transform: scale(.3); opacity: .8; } 100% { transform: scale(1.5); opacity: 0; } }`}</style>
+      <canvas ref={canvasRef} onPointerDown={handlePointerDown} style={{ width: "100%", height: "100%", cursor: "grab", opacity: 0, transition: "opacity 1.2s ease", borderRadius: "50%", touchAction: "none" }} />
+      {markers.map((marker) => (
+        <div key={marker.id} className="pointer-events-none absolute left-1/2 top-1/2 flex size-10 -translate-x-1/2 -translate-y-1/2 items-center justify-center" style={{ opacity: 0 }}>
+          <span className="absolute inset-0 rounded-full border-2 border-cyan-300" style={{ animation: `pulse-expand 2s ease-out infinite ${marker.delay}s` }} />
+          <span className="absolute inset-0 rounded-full border-2 border-cyan-300" style={{ animation: `pulse-expand 2s ease-out infinite ${marker.delay + 0.5}s` }} />
+          <span className="size-2.5 rounded-full bg-cyan-300 shadow-[0_0_0_3px_#111,0_0_0_5px_#33ccdd]" />
+        </div>
+      ))}
+    </div>
+  )
+}
